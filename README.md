@@ -4,6 +4,8 @@ Minimal macOS screenshot annotation tool. One Swift file, AppKit only, no
 dependencies — compile it yourself and there is nothing to trust but Apple's
 toolchain. Born out of [flameshot#4125](https://github.com/flameshot-org/flameshot/issues/4125).
 
+![test-terminal.png annotated by Claude via the headless CLI](test-annotated.png)
+
 ## Build
 
 ```sh

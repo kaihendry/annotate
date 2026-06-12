@@ -1,3 +1,5 @@
 annotate
 Annotate.app/
 test-*.png
+!test-terminal.png
+!test-annotated.png
