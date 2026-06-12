@@ -1,0 +1,20 @@
+name: build
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: make annotate
+      - run: make app
+      - name: smoke test
+        run: |
+          ./annotate test-terminal.png &
+          pid=$!
+          sleep 5
+          kill -0 "$pid"   # still running = launched without crashing
+          kill "$pid"
