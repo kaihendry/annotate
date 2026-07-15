@@ -266,9 +266,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let path = args.first(where: { !$0.hasPrefix("-") }),
            let img = NSImage(contentsOfFile: path) {
             load(img, title: (path as NSString).lastPathComponent)
-        } else if let img = Self.clipboardImage() {
-            load(img, title: "Annotate (pasted)")
-        } else {
+        } else if !pasteFromClipboard() {
             watchPasteboard()
         }
 
@@ -286,10 +284,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Reading pasteboard *content* without user intent triggers the macOS
     // paste-consent alert (15.4+), so check the type list (metadata, no
     // alert) before touching the data.
-    private static func clipboardImage() -> NSImage? {
+    @discardableResult
+    private func pasteFromClipboard() -> Bool {
         let pb = NSPasteboard.general
-        guard pb.availableType(from: [.png, .tiff, .pdf]) != nil else { return nil }
-        return NSImage(pasteboard: pb)
+        guard pb.availableType(from: [.png, .tiff, .pdf]) != nil,
+              let img = NSImage(pasteboard: pb) else { return false }
+        load(img, title: "Annotate (pasted)")
+        return true
     }
 
     // No screencapture here — MDM machines often block Screen Recording
@@ -301,9 +302,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pbWatcher = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             guard pb.changeCount != seen else { return }
             seen = pb.changeCount
-            guard let img = Self.clipboardImage() else { return }
-            self?.load(img, title: "Annotate (pasted)")
-            NSApp.activate(ignoringOtherApps: true)
+            if self?.pasteFromClipboard() == true {
+                NSApp.activate(ignoringOtherApps: true)
+            }
         }
     }
 
@@ -385,10 +386,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pb.setData(tiff, forType: .tiff)
     }
 
-    @objc private func pasteImage() {
-        guard let img = NSImage(pasteboard: .general) else { return }
-        load(img, title: "Annotate (pasted)")
-    }
+    @objc private func pasteImage() { pasteFromClipboard() }
 }
 
 func fail(_ msg: String) -> Never {
