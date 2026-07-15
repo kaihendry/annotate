@@ -43,8 +43,12 @@ without any prompt.
 Shapes are red with a white halo, text is 28pt JetBrains Mono Bold (falls back
 to system monospaced). Exports at full retina resolution.
 
-`make install-app` puts Annotate.app in /Applications, so after ⌃⇧⌘4 just
-launch it from Spotlight (or any launcher) — the screenshot loads itself.
+Images open pixel-true at the size you captured; anything bigger than the
+screen is scaled to fit (no scrollbars) — pinch to zoom back in.
+
+`make install` puts the CLI on your PATH and Annotate.app in /Applications,
+so after ⌃⇧⌘4 just launch it from Spotlight (or any launcher) — the
+screenshot loads itself.
 
 ## Use (headless, for scripts and agents)
 

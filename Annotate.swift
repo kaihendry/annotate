@@ -246,6 +246,7 @@ final class Canvas: NSView, NSTextFieldDelegate {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let canvas = Canvas(frame: NSRect(x: 0, y: 0, width: 480, height: 300))
+    private let scroll = NSScrollView()
     private var window: NSWindow!
     private var pbWatcher: Timer?
 
@@ -255,10 +256,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
         window.title = "Annotate"
-        let scroll = NSScrollView()
         scroll.documentView = canvas
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
+        scroll.allowsMagnification = true
+        scroll.minMagnification = 0.05
+        scroll.maxMagnification = 8
         window.contentView = scroll
         window.center()
 
@@ -311,12 +314,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func load(_ image: NSImage, title: String) {
         pbWatcher?.invalidate()
         pbWatcher = nil
+        // Size from pixels, not embedded DPI — clipboard metadata often
+        // disagrees with the captured area on scaled displays.
+        let pxW = image.representations.map(\.pixelsWide).max() ?? 0
+        let pxH = image.representations.map(\.pixelsHigh).max() ?? 0
+        if pxW > 0, pxH > 0 {
+            let scale = window.backingScaleFactor
+            image.size = NSSize(width: CGFloat(pxW) / scale, height: CGFloat(pxH) / scale)
+        }
         canvas.image = image
         window.title = title
         if let screen = window.screen ?? NSScreen.main {
             let avail = screen.visibleFrame.insetBy(dx: 40, dy: 40)
-            window.setContentSize(NSSize(width: min(image.size.width, avail.width),
-                                         height: min(image.size.height, avail.height)))
+            // shrink to fit the screen instead of showing scrollbars
+            let fit = min(1, avail.width / image.size.width,
+                          avail.height / image.size.height)
+            window.setContentSize(NSSize(width: image.size.width * fit,
+                                         height: image.size.height * fit))
+            scroll.magnification = fit
             window.center()
         }
     }
