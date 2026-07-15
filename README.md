@@ -43,10 +43,8 @@ without any prompt.
 Shapes are red with a white halo, text is 28pt JetBrains Mono Bold (falls back
 to system monospaced). Exports at full retina resolution.
 
-Bind to a hotkey via Raycast: add this directory as a Script Commands
-directory and assign a key to "Annotate Screenshot" (`annotate-screenshot.sh`).
-No Screen Recording permission needed — screenshots come from the system
-tool via the clipboard.
+`make install-app` puts Annotate.app in /Applications, so after ⌃⇧⌘4 just
+launch it from Spotlight (or any launcher) — the screenshot loads itself.
 
 ## Use (headless, for scripts and agents)
 

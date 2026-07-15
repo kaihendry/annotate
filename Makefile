@@ -1,14 +1,14 @@
 PREFIX ?= /usr/local
-
-annotate: Annotate.swift
-	swiftc -O Annotate.swift -o annotate
-
-APP = Annotate.app
+APP     = Annotate.app
 
 .PHONY: install app install-app clean
+
+annotate: Annotate.swift
+	swiftc -O $< -o $@
+
 install: annotate
-	mkdir -p $(PREFIX)/bin
-	install -m 755 annotate $(PREFIX)/bin/annotate
+	install -d $(PREFIX)/bin
+	install -m 755 annotate $(PREFIX)/bin/
 
 app: annotate Info.plist
 	rm -rf $(APP)
