@@ -6,6 +6,8 @@
 // Tools: B box · A arrow · T text (click, type, ⏎ to commit, ⎋ to cancel)
 // Keys:  ⌘O open · ⌘V paste · ⌘Z undo · ⌘C copy result · ⌘S save PNG · ⌘Q quit
 // On quit the annotated image is copied to the clipboard.
+// Colour: defaults write com.hendry.annotate colour RRGGBB (default red),
+//         or per run: -colour RRGGBB
 //
 // Headless (for scripts/agents — coordinates in pixels, origin top-left):
 //   ./annotate in.png --box x,y,w,h --arrow x1,y1,x2,y2 --text x,y,string --out out.png
@@ -39,12 +41,26 @@ final class Canvas: NSView, NSTextFieldDelegate {
     private var anchor = NSPoint.zero
     private var editor: NSTextField?
 
+    // Annotation colour: defaults write com.hendry.annotate colour RRGGBB
+    // (or a one-off -colour RRGGBB argument, via NSArgumentDomain).
+    static let accent: NSColor = {
+        var hex = UserDefaults.standard.string(forKey: "colour")
+            ?? CFPreferencesCopyAppValue("colour" as CFString,
+                                         "com.hendry.annotate" as CFString) as? String
+            ?? ""
+        if hex.hasPrefix("#") { hex.removeFirst() }
+        guard hex.count == 6, let v = UInt32(hex, radix: 16) else { return .systemRed }
+        return NSColor(red: CGFloat((v >> 16) & 0xFF) / 255,
+                       green: CGFloat((v >> 8) & 0xFF) / 255,
+                       blue: CGFloat(v & 0xFF) / 255, alpha: 1)
+    }()
+
     private static let textFont =
         NSFont(name: "JetBrainsMono-Bold", size: 28)
         ?? .monospacedSystemFont(ofSize: 28, weight: .bold)
     private static let textAttrs: [NSAttributedString.Key: Any] = [
         .font: textFont,
-        .foregroundColor: NSColor.systemRed,
+        .foregroundColor: accent,
     ]
     private static let haloAttrs: [NSAttributedString.Key: Any] = [
         .font: textFont,
@@ -118,7 +134,7 @@ final class Canvas: NSView, NSTextFieldDelegate {
         NSColor.white.setStroke()
         path.lineWidth = Self.strokeWidth + 4
         path.stroke()
-        NSColor.systemRed.setStroke()
+        Self.accent.setStroke()
         path.lineWidth = Self.strokeWidth
         path.stroke()
     }
@@ -173,7 +189,7 @@ final class Canvas: NSView, NSTextFieldDelegate {
         let field = NSTextField(frame: NSRect(x: p.x - 2, y: p.y - 6,
                                               width: max(220, bounds.width - p.x), height: 40))
         field.font = Self.textFont
-        field.textColor = .systemRed
+        field.textColor = Self.accent
         field.isBezeled = false
         field.drawsBackground = false
         field.focusRingType = .none
@@ -265,8 +281,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView = scroll
         window.center()
 
-        let args = CommandLine.arguments.dropFirst()
-        if let path = args.first(where: { !$0.hasPrefix("-") }),
+        // first non-flag argument is the file to open; -colour takes a value
+        let args = Array(CommandLine.arguments.dropFirst())
+        if let path = args.indices.first(where: { i in
+               !args[i].hasPrefix("-") && (i == 0 || args[i - 1] != "-colour")
+           }).map({ args[$0] }),
            let img = NSImage(contentsOfFile: path) {
             load(img, title: (path as NSString).lastPathComponent)
         } else if !pasteFromClipboard() {
@@ -417,6 +436,8 @@ func runHeadless(_ args: [String]) -> Never {
     var i = 0
     while i < args.count {
         switch args[i] {
+        case "-colour": // consumed by UserDefaults (NSArgumentDomain)
+            i += 2
         case "--box", "--arrow", "--text", "--out":
             guard i + 1 < args.count else { fail("missing value for \(args[i])") }
             if args[i] == "--out" { out = args[i + 1] } else { specs.append((args[i], args[i + 1])) }

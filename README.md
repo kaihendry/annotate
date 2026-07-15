@@ -43,6 +43,16 @@ without any prompt.
 Shapes are red with a white halo, text is 28pt JetBrains Mono Bold (falls back
 to system monospaced). Exports at full retina resolution.
 
+If red is too loud for your workplace, set any RRGGBB hex once:
+
+```sh
+defaults write com.hendry.annotate colour 0066FF   # corporate blue
+defaults delete com.hendry.annotate colour         # back to red
+```
+
+or per run: `./annotate -colour 0066FF …` (GUI and headless alike). The white
+halo stays, so any reasonably dark colour remains readable.
+
 Images open pixel-true at the size you captured; anything bigger than the
 screen is scaled to fit (no scrollbars) — pinch to zoom back in.
 
