@@ -1,7 +1,8 @@
 // Annotate — draw boxes, arrows and text on a screenshot.
 // Build: swiftc -O Annotate.swift -o annotate
-// Usage: ./annotate -g          grab a region, annotate, ⌘Q → result is in clipboard
-//        ./annotate [image.png] or launch bare and paste (⌘V)
+// Usage: ./annotate             screenshot to clipboard (⌃⇧⌘4) — it loads
+//                               automatically; annotate, ⌘Q → result is in clipboard
+//        ./annotate [image.png] annotate an existing file
 // Tools: B box · A arrow · T text (click, type, ⏎ to commit, ⎋ to cancel)
 // Keys:  ⌘O open · ⌘V paste · ⌘Z undo · ⌘C copy result · ⌘S save PNG · ⌘Q quit
 // On quit the annotated image is copied to the clipboard.
@@ -71,7 +72,7 @@ final class Canvas: NSView, NSTextFieldDelegate {
             NSColor.windowBackgroundColor.setFill()
             bounds.fill()
             let hint = NSAttributedString(
-                string: "Open (⌘O) or paste (⌘V) an image · B box · A arrow · T text",
+                string: "Screenshot to clipboard (⌃⇧⌘4) to load it here · ⌘O open · ⌘V paste",
                 attributes: [.foregroundColor: NSColor.secondaryLabelColor,
                              .font: NSFont.systemFont(ofSize: 14)])
             let size = hint.size()
@@ -246,6 +247,7 @@ final class Canvas: NSView, NSTextFieldDelegate {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let canvas = Canvas(frame: NSRect(x: 0, y: 0, width: 480, height: 300))
     private var window: NSWindow!
+    private var pbWatcher: Timer?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         buildMenu()
@@ -261,12 +263,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.center()
 
         let args = CommandLine.arguments.dropFirst()
-        // Launched as Annotate.app (bundle, no args) behaves like -g
-        if args.contains("-g") || (args.isEmpty && Bundle.main.bundleIdentifier != nil) {
-            grabScreenshot()
-        } else if let path = args.first(where: { !$0.hasPrefix("-") }),
-                  let img = NSImage(contentsOfFile: path) {
+        if let path = args.first(where: { !$0.hasPrefix("-") }),
+           let img = NSImage(contentsOfFile: path) {
             load(img, title: (path as NSString).lastPathComponent)
+        } else if let img = Self.clipboardImage() {
+            load(img, title: "Annotate (pasted)")
+        } else {
+            watchPasteboard()
         }
 
         window.makeKeyAndOrderFront(nil)
@@ -280,20 +283,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if canvas.image != nil { copyImage() }
     }
 
-    private func grabScreenshot() {
-        let path = NSTemporaryDirectory() + "annotate-grab.png"
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        task.arguments = ["-i", path]
-        try? task.run()
-        task.waitUntilExit()
-        if let img = NSImage(contentsOfFile: path) {
-            load(img, title: "Annotate (grabbed)")
-            try? FileManager.default.removeItem(atPath: path)
+    // Reading pasteboard *content* without user intent triggers the macOS
+    // paste-consent alert (15.4+), so check the type list (metadata, no
+    // alert) before touching the data.
+    private static func clipboardImage() -> NSImage? {
+        let pb = NSPasteboard.general
+        guard pb.availableType(from: [.png, .tiff, .pdf]) != nil else { return nil }
+        return NSImage(pasteboard: pb)
+    }
+
+    // No screencapture here — MDM machines often block Screen Recording
+    // permission. Wait for the user to screenshot with the system tool
+    // (⌃⇧⌘4) and pick the image up from the clipboard.
+    private func watchPasteboard() {
+        let pb = NSPasteboard.general
+        var seen = pb.changeCount
+        pbWatcher = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            guard pb.changeCount != seen else { return }
+            seen = pb.changeCount
+            guard let img = Self.clipboardImage() else { return }
+            self?.load(img, title: "Annotate (pasted)")
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 
     private func load(_ image: NSImage, title: String) {
+        pbWatcher?.invalidate()
+        pbWatcher = nil
         canvas.image = image
         window.title = title
         if let screen = window.screen ?? NSScreen.main {

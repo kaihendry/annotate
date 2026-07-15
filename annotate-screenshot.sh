@@ -10,4 +10,4 @@
 # @raycast.icon ✏️
 # @raycast.packageName Annotate
 
-/usr/local/bin/annotate -g >/dev/null 2>&1 &
+/usr/local/bin/annotate >/dev/null 2>&1 &

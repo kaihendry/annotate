@@ -15,10 +15,20 @@ swiftc -O Annotate.swift -o annotate
 ## Use (GUI)
 
 ```sh
-./annotate -g          # grab a region, annotate, ⌘Q → result is in the clipboard
+./annotate             # screenshot to clipboard (⌃⇧⌘4), annotate, ⌘Q → clipboard
 ./annotate shot.png    # annotate an existing file
-./annotate             # launch empty, ⌘V to paste an image
 ```
+
+Annotate never calls `screencapture` itself — on MDM-managed machines the
+Screen Recording permission this needs is often blocked. Instead it rides on
+the system screenshot tool: launch annotate, press ⌃⇧⌘4 and grab a region
+(⌃ sends it to the clipboard), and the image loads automatically. If the
+clipboard already holds an image at launch, it loads straight away.
+
+On macOS 15.4+ the first auto-load triggers a one-time system alert asking
+to allow annotate to paste from other apps — approve it (or set annotate to
+Always Allow under System Settings → Privacy & Security). ⌘V always works
+without any prompt.
 
 | Key | Action |
 |-----|--------|
@@ -35,7 +45,8 @@ to system monospaced). Exports at full retina resolution.
 
 Bind to a hotkey via Raycast: add this directory as a Script Commands
 directory and assign a key to "Annotate Screenshot" (`annotate-screenshot.sh`).
-First run prompts to give Raycast Screen Recording permission.
+No Screen Recording permission needed — screenshots come from the system
+tool via the clipboard.
 
 ## Use (headless, for scripts and agents)
 
