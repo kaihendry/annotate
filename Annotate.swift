@@ -26,21 +26,9 @@ enum Tool: String {
     case box = "Box (B)", arrow = "Arrow (A)", text = "Text (T)"
 }
 
-final class Canvas: NSView, NSTextFieldDelegate {
-    var image: NSImage? {
-        didSet {
-            shapes = []
-            draft = nil
-            setFrameSize(image?.size ?? NSSize(width: 480, height: 300))
-            needsDisplay = true
-        }
-    }
-    var tool = Tool.box { didSet { window?.subtitle = tool.rawValue } }
-    var shapes: [Shape] = []
-    private var draft: Shape?
-    private var anchor = NSPoint.zero
-    private var editor: NSTextField?
+// MARK: - Shared GUI / headless rendering
 
+enum AnnotationRenderer {
     // Annotation colour: defaults write com.hendry.annotate colour RRGGBB
     // (or a one-off -colour RRGGBB argument, via NSArgumentDomain).
     static let accent: NSColor = {
@@ -55,7 +43,7 @@ final class Canvas: NSView, NSTextFieldDelegate {
                        blue: CGFloat(v & 0xFF) / 255, alpha: 1)
     }()
 
-    private static let textFont =
+    static let textFont =
         NSFont(name: "JetBrainsMono-Bold", size: 28)
         ?? .monospacedSystemFont(ofSize: 28, weight: .bold)
     private static let textAttrs: [NSAttributedString.Key: Any] = [
@@ -68,6 +56,94 @@ final class Canvas: NSView, NSTextFieldDelegate {
         .strokeWidth: 25, // outline-only stroke, % of font size
     ]
     private static let strokeWidth: CGFloat = 5
+
+    static func draw(_ shapes: [Shape], in bounds: NSRect) {
+        // Draw geometry first, then labels. Keep the stored order for undo.
+        for shape in shapes {
+            switch shape {
+            case .box(let rect):
+                strokeWithHalo(NSBezierPath(rect: rect))
+            case .arrow(let from, let to):
+                let path = NSBezierPath()
+                path.move(to: from)
+                path.line(to: to)
+                let angle = atan2(to.y - from.y, to.x - from.x)
+                for wing in [angle + 2.6, angle - 2.6] {
+                    path.move(to: to)
+                    path.line(to: NSPoint(x: to.x + 22 * cos(wing),
+                                          y: to.y + 22 * sin(wing)))
+                }
+                path.lineCapStyle = .round
+                path.lineJoinStyle = .round
+                strokeWithHalo(path)
+            case .text:
+                break
+            }
+        }
+        for case .text(let string, let at) in shapes {
+            let halo = NSAttributedString(string: string, attributes: Self.haloAttrs)
+            let size = halo.size()
+            // keep the whole string inside the image
+            let p = NSPoint(x: max(0, min(at.x, bounds.width - size.width)),
+                            y: max(0, min(at.y, bounds.height - size.height)))
+            halo.draw(at: p)
+            NSAttributedString(string: string, attributes: Self.textAttrs).draw(at: p)
+        }
+    }
+
+    private static func strokeWithHalo(_ path: NSBezierPath) {
+        NSColor.white.setStroke()
+        path.lineWidth = Self.strokeWidth + 4
+        path.stroke()
+        Self.accent.setStroke()
+        path.lineWidth = Self.strokeWidth
+        path.stroke()
+    }
+
+    /// Original image with annotations burned in, at full pixel resolution.
+    static func bitmap(image: NSImage, shapes: [Shape]) -> NSBitmapImageRep? {
+        let pxW = image.representations.map(\.pixelsWide).max() ?? 0
+        let pxH = image.representations.map(\.pixelsHigh).max() ?? 0
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: pxW > 0 ? pxW : Int(image.size.width),
+            pixelsHigh: pxH > 0 ? pxH : Int(image.size.height),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { return nil }
+        rep.size = image.size
+        guard let base = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        // flip the export context so shapes use the same coordinates as the view
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: base.cgContext, flipped: true)
+        let flip = NSAffineTransform()
+        flip.translateX(by: 0, yBy: image.size.height)
+        flip.scaleX(by: 1, yBy: -1)
+        flip.concat()
+        image.draw(in: NSRect(origin: .zero, size: image.size))
+        draw(shapes, in: NSRect(origin: .zero, size: image.size))
+        NSGraphicsContext.restoreGraphicsState()
+        return rep
+    }
+}
+
+// MARK: - Canvas interaction
+
+final class Canvas: NSView, NSTextFieldDelegate {
+    var image: NSImage? {
+        didSet {
+            cancelEditor()
+            shapes = []
+            draft = nil
+            setFrameSize(image?.size ?? NSSize(width: 480, height: 300))
+            needsDisplay = true
+        }
+    }
+    var tool = Tool.box { didSet { window?.subtitle = tool.rawValue } }
+    var shapes: [Shape] = []
+    private var draft: Shape?
+    private var anchor = NSPoint.zero
+    private var editor: NSTextField?
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -97,46 +173,7 @@ final class Canvas: NSView, NSTextFieldDelegate {
             return
         }
         image.draw(in: bounds)
-        render(shapes + (draft.map { [$0] } ?? []))
-    }
-
-    private func render(_ shapes: [Shape]) {
-        for shape in shapes {
-            switch shape {
-            case .box(let rect):
-                strokeWithHalo(NSBezierPath(rect: rect))
-            case .arrow(let from, let to):
-                let path = NSBezierPath()
-                path.move(to: from)
-                path.line(to: to)
-                let angle = atan2(to.y - from.y, to.x - from.x)
-                for wing in [angle + 2.6, angle - 2.6] {
-                    path.move(to: to)
-                    path.line(to: NSPoint(x: to.x + 22 * cos(wing),
-                                          y: to.y + 22 * sin(wing)))
-                }
-                path.lineCapStyle = .round
-                path.lineJoinStyle = .round
-                strokeWithHalo(path)
-            case .text(let string, let at):
-                let halo = NSAttributedString(string: string, attributes: Self.haloAttrs)
-                let size = halo.size()
-                // keep the whole string inside the image
-                let p = NSPoint(x: max(0, min(at.x, bounds.width - size.width)),
-                                y: max(0, min(at.y, bounds.height - size.height)))
-                halo.draw(at: p)
-                NSAttributedString(string: string, attributes: Self.textAttrs).draw(at: p)
-            }
-        }
-    }
-
-    private func strokeWithHalo(_ path: NSBezierPath) {
-        NSColor.white.setStroke()
-        path.lineWidth = Self.strokeWidth + 4
-        path.stroke()
-        Self.accent.setStroke()
-        path.lineWidth = Self.strokeWidth
-        path.stroke()
+        AnnotationRenderer.draw(shapes + (draft.map { [$0] } ?? []), in: bounds)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -162,21 +199,24 @@ final class Canvas: NSView, NSTextFieldDelegate {
     }
 
     override func mouseUp(with event: NSEvent) {
+        guard let draft else { return }
         switch draft {
         case .box(let r) where r.width > 3 && r.height > 3:
-            shapes.append(draft!)
+            shapes.append(draft)
         case .arrow(let a, let b) where hypot(b.x - a.x, b.y - a.y) > 5:
-            shapes.append(draft!)
+            shapes.append(draft)
         default:
             break
         }
-        draft = nil
+        self.draft = nil
         needsDisplay = true
     }
 
-    func undo() {
-        if editor != nil {
-            cancelEditor()
+    @objc func undo(_ sender: Any?) {
+        if let textView = editor?.currentEditor() as? NSTextView {
+            // Undo can reach the canvas through the field editor's responder
+            // chain. Keep it in the active text editing session in that case.
+            textView.undoManager?.undo()
         } else {
             _ = shapes.popLast()
         }
@@ -188,8 +228,8 @@ final class Canvas: NSView, NSTextFieldDelegate {
     private func beginText(at p: NSPoint) {
         let field = NSTextField(frame: NSRect(x: p.x - 2, y: p.y - 6,
                                               width: max(220, bounds.width - p.x), height: 40))
-        field.font = Self.textFont
-        field.textColor = Self.accent
+        field.font = AnnotationRenderer.textFont
+        field.textColor = AnnotationRenderer.accent
         field.isBezeled = false
         field.drawsBackground = false
         field.focusRingType = .none
@@ -198,8 +238,9 @@ final class Canvas: NSView, NSTextFieldDelegate {
         field.target = self
         field.action = #selector(editorCommitted)
         addSubview(field)
-        window?.makeFirstResponder(field)
         editor = field
+        window?.makeFirstResponder(field)
+        (field.currentEditor() as? NSTextView)?.allowsUndo = true
     }
 
     @objc private func editorCommitted() { commitEditor() }
@@ -227,38 +268,22 @@ final class Canvas: NSView, NSTextFieldDelegate {
     }
 
     private func cancelEditor() {
-        editor?.stringValue = ""
-        commitEditor()
+        guard let field = editor else { return }
+        editor = nil
+        field.removeFromSuperview()
+        window?.makeFirstResponder(self)
+        needsDisplay = true
     }
 
-    /// Original image with annotations burned in, at full pixel resolution.
+    /// Commit pending text before exporting the image.
     func rendered() -> NSBitmapImageRep? {
         commitEditor()
         guard let image else { return nil }
-        let pxW = image.representations.map(\.pixelsWide).max() ?? 0
-        let pxH = image.representations.map(\.pixelsHigh).max() ?? 0
-        guard let rep = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: pxW > 0 ? pxW : Int(image.size.width),
-            pixelsHigh: pxH > 0 ? pxH : Int(image.size.height),
-            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
-        else { return nil }
-        rep.size = image.size
-        guard let base = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
-        NSGraphicsContext.saveGraphicsState()
-        // flip the export context so shapes use the same coordinates as the view
-        NSGraphicsContext.current = NSGraphicsContext(cgContext: base.cgContext, flipped: true)
-        let flip = NSAffineTransform()
-        flip.translateX(by: 0, yBy: image.size.height)
-        flip.scaleX(by: 1, yBy: -1)
-        flip.concat()
-        image.draw(in: NSRect(origin: .zero, size: image.size))
-        render(shapes)
-        NSGraphicsContext.restoreGraphicsState()
-        return rep
+        return AnnotationRenderer.bitmap(image: image, shapes: shapes)
     }
 }
+
+// MARK: - Application and clipboard
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let canvas = Canvas(frame: NSRect(x: 0, y: 0, width: 480, height: 300))
@@ -267,6 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pbWatcher: Timer?
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        setAppIcon()
         buildMenu()
         window = NSWindow(contentRect: canvas.frame,
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -295,6 +321,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(canvas)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func setAppIcon() {
+        let executable = (Bundle.main.executableURL
+            ?? URL(fileURLWithPath: CommandLine.arguments[0])).resolvingSymlinksInPath()
+        let directory = executable.deletingLastPathComponent()
+        // Support the app bundle, a source checkout, and the installed CLI.
+        let candidates = [
+            Bundle.main.url(forResource: "Annotate", withExtension: "icns"),
+            directory.appendingPathComponent("Resources/Annotate.icns"),
+            directory.deletingLastPathComponent()
+                .appendingPathComponent("share/annotate/Annotate.icns"),
+        ]
+        for case let url? in candidates {
+            if let icon = NSImage(contentsOf: url) {
+                NSApp.applicationIconImage = icon
+                return
+            }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
@@ -368,9 +413,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         main.addItem(submenu(fileMenu))
 
         let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(item("Undo", #selector(undoShape), "z"))
-        editMenu.addItem(item("Copy Annotated Image", #selector(copyImage), "c"))
-        editMenu.addItem(item("Paste Image", #selector(pasteImage), "v"))
+        // Nil targets let the active text editor handle standard editing commands.
+        // When the canvas is focused, copy/paste fall back to the app delegate.
+        editMenu.addItem(item("Undo", #selector(Canvas.undo(_:)), "z"))
+        editMenu.addItem(.separator())
+        editMenu.addItem(item("Cut", #selector(NSText.cut(_:)), "x"))
+        editMenu.addItem(item("Copy", #selector(NSText.copy(_:)), "c"))
+        editMenu.addItem(item("Paste", #selector(NSText.paste(_:)), "v"))
+        editMenu.addItem(item("Select All", #selector(NSText.selectAll(_:)), "a"))
         main.addItem(submenu(editMenu))
 
         NSApp.mainMenu = main
@@ -383,9 +433,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func item(_ title: String, _ action: Selector, _ key: String) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
-        item.target = self
-        return item
+        NSMenuItem(title: title, action: action, keyEquivalent: key)
     }
 
     @objc private func openImage() {
@@ -407,9 +455,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func undoShape() { canvas.undo() }
+    @objc private func copy(_ sender: Any?) { copyImage() }
 
-    @objc private func copyImage() {
+    private func copyImage() {
         // write data eagerly so the clipboard survives the app quitting
         guard let rep = canvas.rendered(),
               let png = rep.representation(using: .png, properties: [:]),
@@ -420,8 +468,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pb.setData(tiff, forType: .tiff)
     }
 
-    @objc private func pasteImage() { pasteFromClipboard() }
+    @objc private func paste(_ sender: Any?) { pasteFromClipboard() }
 }
+
+// MARK: - Command line
 
 func fail(_ msg: String) -> Never {
     FileHandle.standardError.write(Data((msg + "\n").utf8))
@@ -482,16 +532,15 @@ func runHeadless(_ args: [String]) -> Never {
         }
     }
 
-    let canvas = Canvas(frame: .zero)
-    canvas.image = image
-    canvas.shapes = shapes
-    guard let data = canvas.rendered()?.representation(using: .png, properties: [:]) else {
+    guard let data = AnnotationRenderer.bitmap(image: image, shapes: shapes)?
+        .representation(using: .png, properties: [:]) else {
         fail("render failed")
     }
     do { try data.write(to: URL(fileURLWithPath: out)) } catch { fail("write failed: \(error)") }
     exit(0)
 }
 
+#if !ANNOTATE_TESTING
 let cliArgs = Array(CommandLine.arguments.dropFirst())
 if cliArgs.contains("--out") { runHeadless(cliArgs) }
 
@@ -500,3 +549,4 @@ app.setActivationPolicy(.regular)
 let delegate = AppDelegate()
 app.delegate = delegate
 app.run()
+#endif

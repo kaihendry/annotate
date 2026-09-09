@@ -1,5 +1,7 @@
 # annotate
 
+<img src="Resources/Annotate.png" alt="Annotate app icon" width="128">
+
 Minimal macOS screenshot annotation tool. One Swift file, AppKit only, no
 dependencies — compile it yourself and there is nothing to trust but Apple's
 toolchain. Born out of [flameshot#4125](https://github.com/flameshot-org/flameshot/issues/4125).
@@ -40,8 +42,14 @@ without any prompt.
 | `⌘S` | save as PNG |
 | `⌘Q` | quit — annotated image is copied to the clipboard automatically |
 
+While entering text, `⌘V` pastes clipboard text at the cursor or replaces the
+selection. `⌘A`, `⌘X`, and `⌘C` select all, cut, and copy text; `⌘Z` undoes
+text edits. Outside text entry, `⌘C` copies the annotated image and `⌘V` loads
+a clipboard image.
+
 Shapes are red with a white halo, text is 28pt JetBrains Mono Bold (falls back
 to system monospaced). Exports at full retina resolution.
+Text always appears above boxes and arrows, including while drawing and in exports.
 
 If red is too loud for your workplace, set any RRGGBB hex once:
 
@@ -59,6 +67,9 @@ screen is scaled to fit (no scrollbars) — pinch to zoom back in.
 `make install` puts the CLI on your PATH and Annotate.app in /Applications,
 so after ⌃⇧⌘4 just launch it from Spotlight (or any launcher) — the
 screenshot loads itself.
+
+The app bundle and CLI launches use a custom icon. `make icon` regenerates its
+PNG preview and all macOS icon sizes using AppKit and `iconutil`.
 
 ## Use (headless, for scripts and agents)
 
@@ -92,3 +103,8 @@ anything is misplaced.'
 The read-back step is what makes this reliable: the model verifies its own
 box placement visually and corrects itself. `test-terminal.png` /
 `test-annotated.png` in this repo are the output of exactly this workflow.
+
+## Test
+
+`make test` runs native AppKit editing and clipboard regression checks on macOS.
+It briefly opens a window and restores the clipboard afterward.
