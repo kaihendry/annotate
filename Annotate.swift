@@ -132,7 +132,7 @@ enum AnnotationRenderer {
 final class Canvas: NSView, NSTextFieldDelegate {
     var image: NSImage? {
         didSet {
-            cancelEditor()
+            removeEditor()
             shapes = []
             draft = nil
             setFrameSize(image?.size ?? NSSize(width: 480, height: 300))
@@ -236,38 +236,33 @@ final class Canvas: NSView, NSTextFieldDelegate {
         field.placeholderString = "text ⏎"
         field.delegate = self
         field.target = self
-        field.action = #selector(editorCommitted)
+        field.action = #selector(commitEditor)
         addSubview(field)
         editor = field
         window?.makeFirstResponder(field)
         (field.currentEditor() as? NSTextView)?.allowsUndo = true
     }
 
-    @objc private func editorCommitted() { commitEditor() }
-
     func control(_ control: NSControl, textView: NSTextView,
                  doCommandBy selector: Selector) -> Bool {
         if selector == #selector(NSResponder.cancelOperation(_:)) {
-            cancelEditor()
+            removeEditor()
             return true
         }
         return false
     }
 
-    private func commitEditor() {
+    @objc private func commitEditor() {
         guard let field = editor else { return }
-        editor = nil
         let string = field.stringValue.trimmingCharacters(in: .whitespaces)
         if !string.isEmpty {
             shapes.append(.text(string, NSPoint(x: field.frame.minX + 2,
                                                 y: field.frame.minY + 4)))
         }
-        field.removeFromSuperview()
-        window?.makeFirstResponder(self)
-        needsDisplay = true
+        removeEditor()
     }
 
-    private func cancelEditor() {
+    private func removeEditor() {
         guard let field = editor else { return }
         editor = nil
         field.removeFromSuperview()
@@ -408,19 +403,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         main.addItem(submenu(appMenu))
 
         let fileMenu = NSMenu(title: "File")
-        fileMenu.addItem(item("Open…", #selector(openImage), "o"))
-        fileMenu.addItem(item("Save As PNG…", #selector(saveImage), "s"))
+        fileMenu.addItem(withTitle: "Open…", action: #selector(openImage), keyEquivalent: "o")
+        fileMenu.addItem(withTitle: "Save As PNG…", action: #selector(saveImage), keyEquivalent: "s")
         main.addItem(submenu(fileMenu))
 
         let editMenu = NSMenu(title: "Edit")
         // Nil targets let the active text editor handle standard editing commands.
         // When the canvas is focused, copy/paste fall back to the app delegate.
-        editMenu.addItem(item("Undo", #selector(Canvas.undo(_:)), "z"))
+        editMenu.addItem(withTitle: "Undo", action: #selector(Canvas.undo(_:)), keyEquivalent: "z")
         editMenu.addItem(.separator())
-        editMenu.addItem(item("Cut", #selector(NSText.cut(_:)), "x"))
-        editMenu.addItem(item("Copy", #selector(NSText.copy(_:)), "c"))
-        editMenu.addItem(item("Paste", #selector(NSText.paste(_:)), "v"))
-        editMenu.addItem(item("Select All", #selector(NSText.selectAll(_:)), "a"))
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         main.addItem(submenu(editMenu))
 
         NSApp.mainMenu = main
@@ -430,10 +425,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let holder = NSMenuItem()
         holder.submenu = menu
         return holder
-    }
-
-    private func item(_ title: String, _ action: Selector, _ key: String) -> NSMenuItem {
-        NSMenuItem(title: title, action: action, keyEquivalent: key)
     }
 
     @objc private func openImage() {
