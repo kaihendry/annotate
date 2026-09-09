@@ -15,7 +15,9 @@ brew install kaihendry/tap/annotate
 ```
 
 This builds from a checksummed source release using Apple's Command Line Tools
-and installs the `annotate` command and app bundle. No `sudo` is needed.
+and installs the `annotate-screenshot` command and app bundle. No `sudo` is needed.
+The command name avoids a collision with Homebrew's `gd` package. Use
+`annotate-screenshot` in place of `./annotate` in the examples below.
 
 To launch from Finder or Spotlight, optionally add the app to your Applications folder:
 
