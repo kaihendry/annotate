@@ -56,13 +56,16 @@ without any prompt.
 
 | Key | Action |
 |-----|--------|
-| `B` / `A` / `T` | box / arrow / text tool (current tool shown in titlebar) |
-| drag | draw box or arrow |
+| `A` / `B` / `R` / `T` | move / box / arrow / text tool |
+| drag | move an object with `A`, or draw with `B` / `R` |
 | click, type, `⏎` | place text (`⎋` cancels) |
-| `⌘Z` | undo last shape |
+| `⌘Z` | undo the last annotation or move |
 | `⌘C` | copy annotated image |
 | `⌘S` | save as PNG |
 | `⌘Q` | quit — annotated image is copied to the clipboard automatically |
+
+The tool strip shows these shortcuts and highlights the current tool. Click a
+tool to select it, or use its key when you’re not typing text.
 
 While entering text, `⌘V` pastes clipboard text at the cursor or replaces the
 selection. `⌘A`, `⌘X`, and `⌘C` select all, cut, and copy text; `⌘Z` undoes
@@ -72,6 +75,8 @@ a clipboard image.
 Shapes are red with a white halo, text is 28pt JetBrains Mono Bold (falls back
 to system monospaced). Exports at full retina resolution.
 Text always appears above boxes and arrows, including while drawing and in exports.
+Press `A` and drag text, an arrow, or a box edge to reposition it. Text gets
+priority when objects overlap. Each drag is one undo step; `⎋` cancels a drag.
 
 If red is too loud for your workplace, set any RRGGBB hex once:
 
@@ -128,5 +133,5 @@ box placement visually and corrects itself. `test-terminal.png` /
 
 ## Test
 
-`make test` runs native AppKit editing and clipboard regression checks on macOS.
+`make test` runs native AppKit editing, movement, and clipboard regression checks on macOS.
 It briefly opens a window and restores the clipboard afterward.

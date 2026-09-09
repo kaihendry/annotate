@@ -3,7 +3,7 @@
 // Usage: ./annotate             screenshot to clipboard (⌃⇧⌘4) — it loads
 //                               automatically; annotate, ⌘Q → result is in clipboard
 //        ./annotate [image.png] annotate an existing file
-// Tools: B box · A arrow · T text (click, type, ⏎ to commit, ⎋ to cancel)
+// Tools: A move · B box · R arrow · T text (click, type, ⏎ to commit, ⎋ to cancel)
 // Keys:  ⌘O open · ⌘V paste · ⌘Z undo · ⌘C copy result · ⌘S save PNG · ⌘Q quit
 // On quit the annotated image is copied to the clipboard.
 // Colour: defaults write com.hendry.annotate colour RRGGBB (default red),
@@ -16,14 +16,30 @@
 import AppKit
 import UniformTypeIdentifiers
 
-enum Shape {
+enum Shape: Equatable {
     case box(NSRect)
     case arrow(NSPoint, NSPoint)
     case text(String, NSPoint)
+
+    func movedBy(dx: CGFloat, dy: CGFloat, in bounds: NSRect) -> Shape {
+        func offset(_ point: NSPoint) -> NSPoint {
+            NSPoint(x: point.x + dx, y: point.y + dy)
+        }
+        switch self {
+        case .box(let rect):
+            return .box(rect.offsetBy(dx: dx, dy: dy))
+        case .arrow(let from, let to):
+            return .arrow(offset(from), offset(to))
+        case .text(let string, let at):
+            let start = AnnotationRenderer.textRect(string, at: at, in: bounds).origin
+            let end = AnnotationRenderer.textRect(string, at: offset(start), in: bounds).origin
+            return start == end ? self : .text(string, end)
+        }
+    }
 }
 
-enum Tool: String {
-    case box = "Box (B)", arrow = "Arrow (A)", text = "Text (T)"
+enum Tool: String, CaseIterable {
+    case move = "Move (A)", box = "Box (B)", arrow = "Arrow (R)", text = "Text (T)"
 }
 
 // MARK: - Shared GUI / headless rendering
@@ -67,11 +83,9 @@ enum AnnotationRenderer {
                 let path = NSBezierPath()
                 path.move(to: from)
                 path.line(to: to)
-                let angle = atan2(to.y - from.y, to.x - from.x)
-                for wing in [angle + 2.6, angle - 2.6] {
+                for wing in arrowWings(from: from, to: to) {
                     path.move(to: to)
-                    path.line(to: NSPoint(x: to.x + 22 * cos(wing),
-                                          y: to.y + 22 * sin(wing)))
+                    path.line(to: wing)
                 }
                 path.lineCapStyle = .round
                 path.lineJoinStyle = .round
@@ -82,12 +96,45 @@ enum AnnotationRenderer {
         }
         for case .text(let string, let at) in shapes {
             let halo = NSAttributedString(string: string, attributes: Self.haloAttrs)
-            let size = halo.size()
-            // keep the whole string inside the image
-            let p = NSPoint(x: max(0, min(at.x, bounds.width - size.width)),
-                            y: max(0, min(at.y, bounds.height - size.height)))
+            let p = textRect(string, at: at, in: bounds).origin
             halo.draw(at: p)
             NSAttributedString(string: string, attributes: Self.textAttrs).draw(at: p)
+        }
+    }
+
+    // Share visible geometry between drawing, picking, and moving labels.
+    static func textRect(_ string: String, at: NSPoint, in bounds: NSRect) -> NSRect {
+        let size = NSAttributedString(string: string, attributes: haloAttrs).size()
+        let origin = NSPoint(x: max(0, min(at.x, bounds.width - size.width)),
+                             y: max(0, min(at.y, bounds.height - size.height)))
+        return NSRect(origin: origin, size: size)
+    }
+
+    private static func arrowWings(from: NSPoint, to: NSPoint) -> [NSPoint] {
+        let angle = atan2(to.y - from.y, to.x - from.x)
+        return [angle + 2.6, angle - 2.6].map {
+            NSPoint(x: to.x + 22 * cos($0), y: to.y + 22 * sin($0))
+        }
+    }
+
+    static func contains(_ shape: Shape, point: NSPoint, in bounds: NSRect,
+                         tolerance: CGFloat) -> Bool {
+        let tolerance = max(tolerance, (strokeWidth + 4) / 2)
+        switch shape {
+        case .box(let rect):
+            return rect.insetBy(dx: -tolerance, dy: -tolerance).contains(point)
+                && !rect.insetBy(dx: tolerance, dy: tolerance).contains(point)
+        case .arrow(let from, let to):
+            return ([from] + arrowWings(from: from, to: to)).contains { end in
+                let dx = end.x - to.x, dy = end.y - to.y
+                let lengthSquared = dx * dx + dy * dy
+                let t = lengthSquared > 0
+                    ? max(0, min(1, ((point.x - to.x) * dx + (point.y - to.y) * dy) / lengthSquared)) : 0
+                return hypot(point.x - to.x - t * dx, point.y - to.y - t * dy) <= tolerance
+            }
+        case .text(let string, let at):
+            return textRect(string, at: at, in: bounds)
+                .insetBy(dx: -tolerance, dy: -tolerance).contains(point)
         }
     }
 
@@ -132,29 +179,62 @@ enum AnnotationRenderer {
 final class Canvas: NSView, NSTextFieldDelegate {
     var image: NSImage? {
         didSet {
+            cancelOperation(nil)
             removeEditor()
             shapes = []
-            draft = nil
+            history = []
             setFrameSize(image?.size ?? NSSize(width: 480, height: 300))
             needsDisplay = true
         }
     }
-    var tool = Tool.box { didSet { window?.subtitle = tool.rawValue } }
+    var tool = Tool.box {
+        didSet {
+            commitEditor()
+            cancelOperation(nil)
+            toolPicker.selectedSegment = Tool.allCases.firstIndex(of: tool)!
+        }
+    }
+    lazy var toolPicker: NSSegmentedControl = {
+        let picker = NSSegmentedControl(labels: Tool.allCases.map(\.rawValue),
+                                        trackingMode: .selectOne,
+                                        target: self, action: #selector(selectTool(_:)))
+        picker.selectedSegment = Tool.allCases.firstIndex(of: tool)!
+        picker.setAccessibilityLabel("Annotation tool")
+        picker.setToolTip("Drag text, an arrow, or a box edge. ⌘Z undoes; Esc cancels.", forSegment: 0)
+        picker.setToolTip("Click to type. Return commits; Esc cancels.", forSegment: 3)
+        return picker
+    }()
     var shapes: [Shape] = []
+    private var history: [[Shape]] = []
+    private var moving: (index: Int, before: [Shape])?
     private var draft: Shape?
-    private var anchor = NSPoint.zero
+    private var anchor: NSPoint?
     private var editor: NSTextField?
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
-    override func viewDidMoveToWindow() { window?.subtitle = tool.rawValue }
+    @objc private func selectTool(_ sender: NSSegmentedControl) {
+        tool = Tool.allCases[sender.selectedSegment]
+        window?.makeFirstResponder(self)
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: tool == .move
+                      ? (moving == nil ? .openHand : .closedHand) : .arrow)
+    }
 
     override func keyDown(with event: NSEvent) {
+        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else {
+            super.keyDown(with: event)
+            return
+        }
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "b": tool = .box
-        case "a": tool = .arrow
+        case "a": tool = .move
+        case "r": tool = .arrow
         case "t": tool = .text
+        case "\u{1b}": cancelOperation(nil)
         default: super.keyDown(with: event)
         }
     }
@@ -179,14 +259,23 @@ final class Canvas: NSView, NSTextFieldDelegate {
     override func mouseDown(with event: NSEvent) {
         commitEditor()
         guard image != nil else { return }
-        anchor = convert(event.locationInWindow, from: nil)
-        if tool == .text { beginText(at: anchor) }
+        let point = convert(event.locationInWindow, from: nil)
+        anchor = point
+        if tool == .text { beginText(at: point) }
+        if tool == .move, let index = shape(at: point) {
+            moving = (index, shapes)
+            NSCursor.closedHand.set()
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard image != nil else { return }
+        guard image != nil, let anchor else { return }
         let p = convert(event.locationInWindow, from: nil)
         switch tool {
+        case .move:
+            guard let moving else { return }
+            shapes[moving.index] = moving.before[moving.index]
+                .movedBy(dx: p.x - anchor.x, dy: p.y - anchor.y, in: bounds)
         case .box:
             draft = .box(NSRect(x: min(anchor.x, p.x), y: min(anchor.y, p.y),
                                 width: abs(p.x - anchor.x), height: abs(p.y - anchor.y)))
@@ -199,17 +288,48 @@ final class Canvas: NSView, NSTextFieldDelegate {
     }
 
     override func mouseUp(with event: NSEvent) {
+        defer {
+            moving = nil
+            anchor = nil
+            draft = nil
+            needsDisplay = true
+            window?.invalidateCursorRects(for: self)
+        }
+        if let moving {
+            if shapes != moving.before { history.append(moving.before) }
+            return
+        }
         guard let draft else { return }
         switch draft {
         case .box(let r) where r.width > 3 && r.height > 3:
-            shapes.append(draft)
+            append(draft)
         case .arrow(let a, let b) where hypot(b.x - a.x, b.y - a.y) > 5:
-            shapes.append(draft)
+            append(draft)
         default:
             break
         }
-        self.draft = nil
+    }
+
+    private func shape(at point: NSPoint) -> Int? {
+        let tolerance = 6 / (enclosingScrollView?.magnification ?? 1)
+        let hits = shapes.indices.reversed().filter {
+            AnnotationRenderer.contains(shapes[$0], point: point, in: bounds, tolerance: tolerance)
+        }
+        return hits.first { if case .text = shapes[$0] { return true }; return false } ?? hits.first
+    }
+
+    private func append(_ shape: Shape) {
+        history.append(shapes)
+        shapes.append(shape)
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        if let moving { shapes = moving.before }
+        moving = nil
+        draft = nil
+        anchor = nil
         needsDisplay = true
+        window?.invalidateCursorRects(for: self)
     }
 
     @objc func undo(_ sender: Any?) {
@@ -217,8 +337,10 @@ final class Canvas: NSView, NSTextFieldDelegate {
             // Undo can reach the canvas through the field editor's responder
             // chain. Keep it in the active text editing session in that case.
             textView.undoManager?.undo()
-        } else {
-            _ = shapes.popLast()
+        } else if moving != nil || draft != nil {
+            cancelOperation(sender)
+        } else if let previous = history.popLast() {
+            shapes = previous
         }
         needsDisplay = true
     }
@@ -256,8 +378,8 @@ final class Canvas: NSView, NSTextFieldDelegate {
         guard let field = editor else { return }
         let string = field.stringValue.trimmingCharacters(in: .whitespaces)
         if !string.isEmpty {
-            shapes.append(.text(string, NSPoint(x: field.frame.minX + 2,
-                                                y: field.frame.minY + 4)))
+            append(.text(string, NSPoint(x: field.frame.minX + 2,
+                                        y: field.frame.minY + 4)))
         }
         removeEditor()
     }
@@ -300,6 +422,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scroll.minMagnification = 0.05
         scroll.maxMagnification = 8
         window.contentView = scroll
+        let picker = canvas.toolPicker
+        picker.sizeToFit()
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.layoutAttribute = .bottom
+        accessory.view = NSView(frame: NSRect(x: 0, y: 0,
+                                              width: picker.frame.width + 24, height: 38))
+        picker.translatesAutoresizingMaskIntoConstraints = false
+        accessory.view.addSubview(picker)
+        NSLayoutConstraint.activate([
+            picker.centerXAnchor.constraint(equalTo: accessory.view.centerXAnchor),
+            picker.centerYAnchor.constraint(equalTo: accessory.view.centerYAnchor),
+        ])
+        window.addTitlebarAccessoryViewController(accessory)
+        window.contentMinSize = NSSize(width: picker.fittingSize.width + 24, height: 120)
         window.center()
 
         // first non-flag argument is the file to open; -colour takes a value
@@ -385,10 +521,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.title = title
         if let screen = window.screen ?? NSScreen.main {
             let avail = screen.visibleFrame.insetBy(dx: 40, dy: 40)
+            let chrome = window.frame.height - window.contentLayoutRect.height
             // shrink to fit the screen instead of showing scrollbars
             let fit = min(1, avail.width / image.size.width,
-                          avail.height / image.size.height)
-            window.setContentSize(NSSize(width: image.size.width * fit,
+                          (avail.height - chrome) / image.size.height)
+            window.setContentSize(NSSize(width: max(window.contentMinSize.width, image.size.width * fit),
                                          height: image.size.height * fit))
             scroll.magnification = fit
             window.center()

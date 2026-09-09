@@ -164,6 +164,146 @@ func testEditing() throws {
     print("PASS: text paste, selection, cut/copy, text and canvas undo, commit/cancel, image clipboard, export")
 }
 
+func testMoving() throws {
+    guard let window = NSApp.keyWindow,
+          let scroll = window.contentView as? NSScrollView,
+          let canvas = scroll.documentView as? Canvas else {
+        throw TestFailure(description: "Missing canvas for move tests")
+    }
+    let image = NSImage(size: NSSize(width: 600, height: 400), flipped: true) { rect in
+        NSColor.white.setFill()
+        rect.fill()
+        return true
+    }
+    canvas.image = image
+    scroll.magnification = 1
+    func key(_ value: String) {
+        window.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero,
+                         modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                         context: nil, characters: value, charactersIgnoringModifiers: value,
+                         isARepeat: false, keyCode: value == "\u{1b}" ? 53 : 0)!)
+    }
+    func mouse(_ type: NSEvent.EventType, _ point: NSPoint) {
+        let event = NSEvent.mouseEvent(with: type, location: canvas.convert(point, to: nil),
+                                      modifierFlags: [], timestamp: 0,
+                                      windowNumber: window.windowNumber, context: nil,
+                                      eventNumber: 0, clickCount: 1, pressure: 1)!
+        switch type {
+        case .leftMouseDown: canvas.mouseDown(with: event)
+        case .leftMouseDragged: canvas.mouseDragged(with: event)
+        default: canvas.mouseUp(with: event)
+        }
+    }
+    func drag(_ from: NSPoint, _ to: NSPoint) {
+        mouse(.leftMouseDown, from)
+        mouse(.leftMouseDragged, NSPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2))
+        mouse(.leftMouseDragged, to)
+        mouse(.leftMouseUp, to)
+    }
+
+    let picker = canvas.toolPicker
+    try expect(window.titlebarAccessoryViewControllers.contains {
+        picker.isDescendant(of: $0.view)
+    }, "Tool shortcuts are not attached to the window")
+    for (index, value) in ["a", "b", "r", "t"].enumerated() {
+        key(value)
+        try expect(canvas.tool == Tool.allCases[index] && picker.selectedSegment == index,
+                   "Shortcut \(value) did not select and highlight its tool")
+        try expect(picker.label(forSegment: index) == Tool.allCases[index].rawValue,
+                   "Tool strip lost its shortcut label")
+    }
+    mouse(.leftMouseDown, NSPoint(x: 80, y: 80))
+    guard let editor = window.firstResponder as? NSTextView else {
+        throw TestFailure(description: "Text tool did not open an editor")
+    }
+    for value in ["a", "r", "t"] { key(value) }
+    try expect(editor.string == "art" && canvas.tool == .text,
+               "Tool shortcuts intercepted typing")
+    picker.selectedSegment = 0
+    try expect(picker.sendAction(picker.action, to: picker.target), "Clicking the tool strip failed")
+    try expect(canvas.tool == .move && window.firstResponder === canvas && canvas.shapes.count == 1,
+               "Clicking Move did not commit text and restore canvas focus")
+
+    canvas.image = image
+    key("b")
+    drag(NSPoint(x: 40, y: 40), NSPoint(x: 180, y: 140))
+    let box = canvas.shapes
+    let originalPNG = canvas.rendered()?.representation(using: .png, properties: [:])
+    key("a")
+    drag(NSPoint(x: 40, y: 80), NSPoint(x: 65, y: 95))
+    try expect(canvas.shapes == [.box(NSRect(x: 65, y: 55, width: 140, height: 100))],
+               "Dragging a box edge changed its size or moved it by the wrong amount")
+    try expect(canvas.rendered()?.representation(using: .png, properties: [:]) != originalPNG,
+               "Export ignored the move")
+    // Neither a click nor a trip back to the starting point should consume undo.
+    mouse(.leftMouseDown, NSPoint(x: 65, y: 95))
+    mouse(.leftMouseUp, NSPoint(x: 65, y: 95))
+    mouse(.leftMouseDown, NSPoint(x: 65, y: 95))
+    mouse(.leftMouseDragged, NSPoint(x: 75, y: 95))
+    mouse(.leftMouseDragged, NSPoint(x: 65, y: 95))
+    mouse(.leftMouseUp, NSPoint(x: 65, y: 95))
+    canvas.undo(nil)
+    try expect(canvas.shapes == box, "One undo did not restore the entire drag")
+    try expect(canvas.rendered()?.representation(using: .png, properties: [:]) == originalPNG,
+               "Undo did not restore the exported pixels")
+    drag(NSPoint(x: 100, y: 90), NSPoint(x: 110, y: 100))
+    try expect(canvas.shapes == box, "Dragging an empty box interior moved the box")
+    mouse(.leftMouseDown, NSPoint(x: 40, y: 80))
+    mouse(.leftMouseDragged, NSPoint(x: 60, y: 80))
+    key("\u{1b}")
+    mouse(.leftMouseUp, NSPoint(x: 60, y: 80))
+    try expect(canvas.shapes == box, "Escape did not cancel the move")
+    canvas.undo(nil)
+    try expect(canvas.shapes.isEmpty, "Cancelled or empty drags consumed an undo step")
+
+    let text = Shape.text("TOP", NSPoint(x: 80, y: 80))
+    let arrow = Shape.arrow(NSPoint(x: 40, y: 100), NSPoint(x: 200, y: 100))
+    canvas.shapes = [text, arrow]
+    drag(NSPoint(x: 90, y: 100), NSPoint(x: 110, y: 110))
+    try expect(canvas.shapes == [.text("TOP", NSPoint(x: 100, y: 90)), arrow],
+               "Move selected later geometry instead of the text drawn above it")
+    canvas.undo(nil)
+    for point in [NSPoint(x: 60, y: 100), NSPoint(x: 182, y: 111)] {
+        drag(point, NSPoint(x: point.x + 20, y: point.y + 10))
+        try expect(canvas.shapes == [text, .arrow(NSPoint(x: 60, y: 110), NSPoint(x: 220, y: 110))],
+                   "Arrow shaft or arrowhead could not be moved without changing its shape")
+        canvas.undo(nil)
+    }
+    canvas.shapes = [.box(NSRect(x: 40, y: 40, width: 160, height: 60)), arrow]
+    drag(NSPoint(x: 60, y: 100), NSPoint(x: 80, y: 110))
+    try expect(canvas.shapes[0] == .box(NSRect(x: 40, y: 40, width: 160, height: 60)),
+               "Move did not select the topmost geometry")
+
+    canvas.image = image
+    let edgeText = Shape.text("EDGE", NSPoint(x: 599, y: 399))
+    canvas.shapes = [edgeText]
+    let visible = AnnotationRenderer.textRect("EDGE", at: NSPoint(x: 599, y: 399), in: canvas.bounds)
+    let grab = NSPoint(x: visible.midX, y: visible.midY)
+    drag(grab, NSPoint(x: grab.x - 30, y: grab.y - 20))
+    try expect(canvas.shapes == [.text("EDGE", NSPoint(x: visible.minX - 30, y: visible.minY - 20))],
+               "Moving an edge-clamped label jumped away from its displayed position")
+    canvas.undo(nil)
+    try expect(canvas.shapes == [edgeText], "Undo changed the original clamped label")
+
+    canvas.image = image
+    canvas.shapes = [.box(NSRect(x: 40, y: 40, width: 160, height: 100))]
+    scroll.magnification = 0.25
+    drag(NSPoint(x: 24, y: 80), NSPoint(x: 44, y: 100)) // Four screen points from edge.
+    try expect(canvas.shapes == [.box(NSRect(x: 60, y: 60, width: 160, height: 100))],
+               "Zooming out made the move hit target too small")
+    mouse(.leftMouseDown, NSPoint(x: 60, y: 90))
+    mouse(.leftMouseDragged, NSPoint(x: 80, y: 90))
+    key("r")
+    mouse(.leftMouseUp, NSPoint(x: 80, y: 90))
+    try expect(canvas.shapes == [.box(NSRect(x: 60, y: 60, width: 160, height: 100))],
+               "Switching tools did not cancel the active move")
+    canvas.image = image
+    canvas.undo(nil)
+    try expect(canvas.shapes.isEmpty, "Replacing an image retained its move history")
+    scroll.magnification = 1
+    print("PASS: tool strip, shortcuts, text/arrow/box moves, picking order, zoom, cancellation, move undo and export")
+}
+
 if !CommandLine.arguments.contains("--run-editing-tests") {
     var status: Int32 = 1
     try preservingClipboard {
@@ -193,6 +333,7 @@ func runTestsWhenReady(attempts: Int = 50) {
     do {
         try testTextLayering()
         try testEditing()
+        try testMoving()
         status = 0
     } catch {
         FileHandle.standardError.write(Data("FAIL: \(error)\n".utf8))
