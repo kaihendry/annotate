@@ -8,7 +8,27 @@ toolchain. Born out of [flameshot#4125](https://github.com/flameshot-org/flamesh
 
 ![test-terminal.png annotated by Claude via the headless CLI](test-annotated.png)
 
-## Build
+## Install with Homebrew
+
+```sh
+brew install kaihendry/tap/annotate
+```
+
+This builds from a checksummed source release using Apple's Command Line Tools
+and installs the `annotate` command and app bundle. No `sudo` is needed.
+
+To launch from Finder or Spotlight, optionally add the app to your Applications folder:
+
+```sh
+mkdir -p ~/Applications
+ln -s "$(brew --prefix kaihendry/tap/annotate)/Annotate.app" ~/Applications/Annotate.app
+```
+
+Update with `brew upgrade kaihendry/tap/annotate`.
+The [tap repository](https://github.com/kaihendry/homebrew-tap) has maintenance
+and uninstall instructions.
+
+## Build from source
 
 ```sh
 swiftc -O Annotate.swift -o annotate
