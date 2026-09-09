@@ -1,5 +1,7 @@
 # annotate
 
+<img src="Resources/Annotate.png" alt="Annotate app icon" width="128">
+
 Minimal macOS screenshot annotation tool. One Swift file, AppKit only, no
 dependencies — compile it yourself and there is nothing to trust but Apple's
 toolchain. Born out of [flameshot#4125](https://github.com/flameshot-org/flameshot/issues/4125).
@@ -15,10 +17,20 @@ swiftc -O Annotate.swift -o annotate
 ## Use (GUI)
 
 ```sh
-./annotate -g          # grab a region, annotate, ⌘Q → result is in the clipboard
+./annotate             # screenshot to clipboard (⌃⇧⌘4), annotate, ⌘Q → clipboard
 ./annotate shot.png    # annotate an existing file
-./annotate             # launch empty, ⌘V to paste an image
 ```
+
+Annotate never calls `screencapture` itself — on MDM-managed machines the
+Screen Recording permission this needs is often blocked. Instead it rides on
+the system screenshot tool: launch annotate, press ⌃⇧⌘4 and grab a region
+(⌃ sends it to the clipboard), and the image loads automatically. If the
+clipboard already holds an image at launch, it loads straight away.
+
+On macOS 15.4+ the first auto-load triggers a one-time system alert asking
+to allow annotate to paste from other apps — approve it (or set annotate to
+Always Allow under System Settings → Privacy & Security). ⌘V always works
+without any prompt.
 
 | Key | Action |
 |-----|--------|
@@ -30,12 +42,34 @@ swiftc -O Annotate.swift -o annotate
 | `⌘S` | save as PNG |
 | `⌘Q` | quit — annotated image is copied to the clipboard automatically |
 
+While entering text, `⌘V` pastes clipboard text at the cursor or replaces the
+selection. `⌘A`, `⌘X`, and `⌘C` select all, cut, and copy text; `⌘Z` undoes
+text edits. Outside text entry, `⌘C` copies the annotated image and `⌘V` loads
+a clipboard image.
+
 Shapes are red with a white halo, text is 28pt JetBrains Mono Bold (falls back
 to system monospaced). Exports at full retina resolution.
+Text always appears above boxes and arrows, including while drawing and in exports.
 
-Bind to a hotkey via Raycast: add this directory as a Script Commands
-directory and assign a key to "Annotate Screenshot" (`annotate-screenshot.sh`).
-First run prompts to give Raycast Screen Recording permission.
+If red is too loud for your workplace, set any RRGGBB hex once:
+
+```sh
+defaults write com.hendry.annotate colour 0066FF   # corporate blue
+defaults delete com.hendry.annotate colour         # back to red
+```
+
+or per run: `./annotate -colour 0066FF …` (GUI and headless alike). The white
+halo stays, so any reasonably dark colour remains readable.
+
+Images open pixel-true at the size you captured; anything bigger than the
+screen is scaled to fit (no scrollbars) — pinch to zoom back in.
+
+`make install` puts the CLI on your PATH and Annotate.app in /Applications,
+so after ⌃⇧⌘4 just launch it from Spotlight (or any launcher) — the
+screenshot loads itself.
+
+The app bundle and CLI launches use a custom icon. `make icon` regenerates its
+PNG preview and all macOS icon sizes using AppKit and `iconutil`.
 
 ## Use (headless, for scripts and agents)
 
@@ -69,3 +103,8 @@ anything is misplaced.'
 The read-back step is what makes this reliable: the model verifies its own
 box placement visually and corrects itself. `test-terminal.png` /
 `test-annotated.png` in this repo are the output of exactly this workflow.
+
+## Test
+
+`make test` runs native AppKit editing and clipboard regression checks on macOS.
+It briefly opens a window and restores the clipboard afterward.

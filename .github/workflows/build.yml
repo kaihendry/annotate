@@ -11,6 +11,7 @@ jobs:
       - uses: actions/checkout@v7
       - run: make annotate
       - run: make app
+      - run: make test
       - name: smoke test
         run: |
           ./annotate test-terminal.png &

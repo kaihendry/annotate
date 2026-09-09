@@ -8,6 +8,8 @@
 	<string>com.hendry.annotate</string>
 	<key>CFBundleName</key>
 	<string>Annotate</string>
+	<key>CFBundleIconFile</key>
+	<string>Annotate.icns</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
